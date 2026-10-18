@@ -1,8 +1,103 @@
+import re
+from datetime import date, datetime
+from io import BytesIO
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+
+st.set_page_config(page_title="Phần mềm tính tiền lương", page_icon="💰", layout="wide")
+
+LOGO = Path(__file__).resolve().parent / "LOGO.jpg"
+if LOGO.exists():
+    st.image(str(LOGO), width=180)
+
+st.title("💰 PHẦN MỀM TÍNH TIỀN LƯƠNG")
+st.subheader("Song Hào")
+st.caption("Quản lý thông tin nhân viên và tính lương cho tối đa 500 người.")
+st.info("Đơn vị tiền: triệu đồng/tháng. Công thức thuế và mức giảm trừ được giữ từ mã nguồn gốc; hãy kiểm tra quy định áp dụng trước khi sử dụng chính thức.")
+
+THONG_TIN = ["Họ và tên", "Email cá nhân", "Ngày sinh", "Chức vụ"]
+DAU_VAO_TIEN = ["Lương cơ bản", "Tiền thưởng", "Phụ cấp tính BHXH", "Phụ cấp không tính BHXH"]
+DAU_VAO = THONG_TIN + DAU_VAO_TIEN + ["Số người phụ thuộc"]
+COT_KET_QUA = ["Tổng thu nhập", "Bảo hiểm người lao động đóng", "Giảm trừ bản thân", "Giảm trừ người phụ thuộc", "Thu nhập tính thuế", "Thuế TNCN", "Tiền thực lãnh"]
+COT_TIEN = DAU_VAO_TIEN + COT_KET_QUA
+
+
+def dinh_dang_tien(x):
+    return f"{x:,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def tinh_thue_tncn(x):
+    if x <= 0:
+        return 0.0
+    if x <= 10:
+        return x * 0.05
+    if x <= 30:
+        return x * 0.10 - 0.5
+    if x <= 60:
+        return x * 0.20 - 3.5
+    if x <= 100:
+        return x * 0.30 - 9.5
+    return x * 0.35 - 14.5
+
+
+def tinh_luong(nv):
+    tong = sum(float(nv[c]) for c in DAU_VAO_TIEN)
+    bh = (float(nv["Lương cơ bản"]) + float(nv["Phụ cấp tính BHXH"])) * 0.105
+    giam_tru = 6.2 * int(nv["Số người phụ thuộc"])
+    tinh_thue = max(0.0, tong - 15.5 - giam_tru - bh)
+    thue = tinh_thue_tncn(tinh_thue)
+    return {"Tổng thu nhập": tong, "Bảo hiểm người lao động đóng": bh,
+            "Giảm trừ bản thân": 15.5, "Giảm trừ người phụ thuộc": giam_tru,
+            "Thu nhập tính thuế": tinh_thue, "Thuế TNCN": thue,
+            "Tiền thực lãnh": tong - bh - thue}
+
+
+def tao_file_excel(df):
+    buf = BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl", date_format="DD/MM/YYYY", datetime_format="DD/MM/YYYY") as writer:
+        for sheet_name, startrow in [("Bang luong", 2), ("Chi tiet", 0)]:
+            df.to_excel(writer, sheet_name=sheet_name, index=False, startrow=startrow)
+            ws = writer.sheets[sheet_name]
+            hr = startrow + 1
+            if startrow:
+                ws["A1"] = "BẢNG TỔNG HỢP LƯƠNG VÀ THUẾ TNCN"
+                ws["A1"].font = Font(size=16, bold=True, color="1F4E78")
+                ws["A2"] = "Đơn vị: triệu đồng/tháng | Ngày sinh: DD/MM/YYYY"
+            ws.row_dimensions[hr].height = 34
+            for cell in ws[hr]:
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill("solid", fgColor="1F4E78")
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            ws.freeze_panes = f"E{hr + 1}"
+            ws.auto_filter.ref = f"A{hr}:{get_column_letter(ws.max_column)}{ws.max_row}"
+            for idx, name in enumerate(df.columns, start=1):
+                ws.column_dimensions[get_column_letter(idx)].width = (
+                    28 if name in ["Họ và tên", "Email cá nhân", "Chức vụ"] else
+                    17 if name == "Ngày sinh" else 24 if name in COT_TIEN else 20
+                )
+                for row in range(hr + 1, ws.max_row + 1):
+                    cell = ws.cell(row, idx)
+                    cell.alignment = Alignment(vertical="center")
+                    if name in COT_TIEN:
+                        cell.number_format = '#,##0.000;[Red]-#,##0.000;0.000'
+                    elif name == "Ngày sinh" and isinstance(cell.value, (date, datetime)):
+                        cell.number_format = "DD/MM/YYYY"
+            if sheet_name == "Bang luong":
+                total_row = ws.max_row + 1
+                ws.cell(total_row, 1, "TỔNG CỘNG")
+                for idx, name in enumerate(df.columns, start=1):
+                    if name in DAU_VAO_TIEN + ["Tổng thu nhập", "Bảo hiểm người lao động đóng", "Thuế TNCN", "Tiền thực lãnh"]:
+                        letter = get_column_letter(idx)
+                        cell = ws.cell(total_row, idx, f"=SUM({letter}{hr+1}:{letter}{total_row-1})")
+                        cell.number_format = '#,##0.000'
                 for cell in ws[total_row]:
                     cell.font = Font(bold=True)
                     cell.fill = PatternFill("solid", fgColor="D9EAF7")
     return buf.getvalue()
-
 
 def tao_du_lieu():
     return pd.DataFrame({
