@@ -467,7 +467,3 @@ if "ket_qua" in st.session_state:
         st.download_button("📥 Tải báo cáo CSV", bao_cao.to_csv(index=False).encode("utf-8-sig"),
                            file_name="bao_cao_gui_phieu_luong.csv", mime="text/csv")
         st.caption("Báo cáo chỉ tồn tại trong phiên làm việc này. Không tự gửi lại email đã được SMTP chấp nhận trong cùng đợt.")
-# GIAO DIEN HANG DOI ZALO - CHE DO THU NGHIEM
-from streamlit_panel import render_queue_panel
-
-render_queue_panel()
