@@ -468,3 +468,17 @@ if "ket_qua" in st.session_state:
         st.download_button("📥 Tải báo cáo CSV", bao_cao.to_csv(index=False).encode("utf-8-sig"),
                            file_name="bao_cao_gui_phieu_luong.csv", mime="text/csv")
         st.caption("Báo cáo chỉ tồn tại trong phiên làm việc này. Không tự gửi lại email đã được SMTP chấp nhận trong cùng đợt.")
+
+# KIỂM TRA CẤU HÌNH SUPABASE
+with st.expander("🔗 Kiểm tra cấu hình Supabase"):
+    try:
+        sb = st.secrets["supabase"]
+        url = str(sb["url"]).strip()
+        key = str(sb["secret_key"]).strip()
+
+        if url.startswith("https://") and key:
+            st.success("OK - Đã đọc được cấu hình Supabase")
+        else:
+            st.error("Error - URL hoặc Secret Key không hợp lệ")
+    except (KeyError, FileNotFoundError, AttributeError):
+        st.error("Error - Không tìm thấy cấu hình Supabase")
