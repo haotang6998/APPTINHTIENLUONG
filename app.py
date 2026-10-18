@@ -212,3 +212,4 @@ with st.expander("📘 Công thức đang sử dụng"):
     - **Thu nhập tính thuế:** MAX(0; Tổng thu nhập − 15,5 − 6,2 × Số người phụ thuộc − Bảo hiểm).
     - **Thuế TNCN:** Tính theo biểu thuế lũy tiến được giữ từ chương trình gốc.
     - **Tiền thực lãnh:** Tổng thu nhập − Bảo hiểm − Thuế TNCN.
+    """)
