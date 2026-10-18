@@ -454,8 +454,7 @@ if "ket_qua" in st.session_state:
                     progress.progress(pos / len(hop_le))
         except (smtplib.SMTPException, OSError, ValueError) as exc:
             st.error(f"Không thể kết nối/đăng nhập Gmail ({type(exc).__name__}). Kiểm tra Gmail App Password và quyền kết nối SMTP của nền tảng.")
-       st.session_state.pop("xac_nhan_gui", None)
-       st.rerun()
+       st.session_state["da_gui_email"] = True
         if thanh_cong:
             st.success(f"Máy chủ SMTP đã chấp nhận {thanh_cong} email. Điều này không bảo đảm thư đã vào hộp thư đến.")
         if that_bai:
