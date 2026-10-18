@@ -1,383 +1,286 @@
-import re
+"""Phần mềm tính lương - Streamlit. Không yêu cầu tệp font ngoài."""
 from datetime import date, datetime
 from io import BytesIO
-from zipfile import ZipFile, ZIP_DEFLATED
-import unicodedata
-
-from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_RIGHT
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib.utils import simpleSplit
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
 from pathlib import Path
+import re
+import unicodedata
+import zipfile
 
 import pandas as pd
 import streamlit as st
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
 st.set_page_config(page_title="Phần mềm tính tiền lương", page_icon="💰", layout="wide")
 
-LOGO = Path(__file__).resolve().parent / "LOGO.jpg"
-if LOGO.exists():
-    st.image(str(LOGO), width=180)
-
-st.title("💰 PHẦN MỀM TÍNH TIỀN LƯƠNG")
-st.subheader("Song Hào")
-st.caption("Quản lý thông tin nhân viên và tính lương cho tối đa 500 người.")
-st.info("Đơn vị tiền: triệu đồng/tháng. Công thức thuế và mức giảm trừ được giữ từ mã nguồn gốc; hãy kiểm tra quy định áp dụng trước khi sử dụng chính thức.")
-
-THONG_TIN = ["Họ và tên", "Email cá nhân", "Ngày sinh", "Chức vụ"]
-DAU_VAO_TIEN = ["Lương cơ bản", "Tiền thưởng", "Phụ cấp tính BHXH", "Phụ cấp không tính BHXH"]
-DAU_VAO = THONG_TIN + DAU_VAO_TIEN + ["Số người phụ thuộc"]
-COT_KET_QUA = ["Tổng thu nhập", "Bảo hiểm người lao động đóng", "Giảm trừ bản thân", "Giảm trừ người phụ thuộc", "Thu nhập tính thuế", "Thuế TNCN", "Tiền thực lãnh"]
-COT_TIEN = DAU_VAO_TIEN + COT_KET_QUA
+MAX_NV = 500
+COT_TIEN = ["Lương cơ bản", "Tiền thưởng", "Phụ cấp tính BHXH", "Phụ cấp không tính BHXH",
+            "Tổng thu nhập", "Bảo hiểm người lao động đóng", "Giảm trừ bản thân",
+            "Giảm trừ người phụ thuộc", "Thu nhập tính thuế", "Thuế TNCN", "Tiền thực lãnh"]
+COT_NHAP = ["Họ và tên", "Email cá nhân", "Ngày sinh", "Chức vụ", "Lương cơ bản", "Tiền thưởng",
+            "Phụ cấp tính BHXH", "Phụ cấp không tính BHXH", "Số người phụ thuộc"]
 
 
-def dinh_dang_tien(x):
-    return f"{x:,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
+def du_lieu_mac_dinh():
+    return pd.DataFrame({
+        "Họ và tên": [f"Nhân viên {i+1}" for i in range(MAX_NV)],
+        "Email cá nhân": [""] * MAX_NV,
+        "Ngày sinh": [""] * MAX_NV,
+        "Chức vụ": [""] * MAX_NV,
+        "Lương cơ bản": [15.0] * MAX_NV,
+        "Tiền thưởng": [2.0] * MAX_NV,
+        "Phụ cấp tính BHXH": [1.0] * MAX_NV,
+        "Phụ cấp không tính BHXH": [0.5] * MAX_NV,
+        "Số người phụ thuộc": [1] * MAX_NV,
+    })
 
 
-def tinh_thue_tncn(x):
-    if x <= 0:
-        return 0.0
-    if x <= 10:
-        return x * 0.05
-    if x <= 30:
-        return x * 0.10 - 0.5
-    if x <= 60:
-        return x * 0.20 - 3.5
-    if x <= 100:
-        return x * 0.30 - 9.5
-    return x * 0.35 - 14.5
+def tinh_thue_tncn(t):
+    t = max(float(t), 0)
+    if t <= 10:
+        return t * 0.05
+    if t <= 30:
+        return t * 0.10 - 0.5
+    if t <= 60:
+        return t * 0.20 - 3.5
+    if t <= 100:
+        return t * 0.30 - 9.5
+    return t * 0.35 - 14.5
 
 
 def tinh_luong(nv):
-    tong = sum(float(nv[c]) for c in DAU_VAO_TIEN)
-    bh = (float(nv["Lương cơ bản"]) + float(nv["Phụ cấp tính BHXH"])) * 0.105
-    giam_tru = 6.2 * int(nv["Số người phụ thuộc"])
-    tinh_thue = max(0.0, tong - 15.5 - giam_tru - bh)
+    luong = float(nv["Lương cơ bản"])
+    thuong = float(nv["Tiền thưởng"])
+    pc_bh = float(nv["Phụ cấp tính BHXH"])
+    pc_khac = float(nv["Phụ cấp không tính BHXH"])
+    n = int(nv["Số người phụ thuộc"])
+    tong = luong + thuong + pc_bh + pc_khac
+    bao_hiem = (luong + pc_bh) * 0.105
+    giam_tru = 15.5
+    giam_tru_pt = 6.2 * n
+    tinh_thue = max(0, tong - bao_hiem - giam_tru - giam_tru_pt)
     thue = tinh_thue_tncn(tinh_thue)
-    return {"Tổng thu nhập": tong, "Bảo hiểm người lao động đóng": bh,
-            "Giảm trừ bản thân": 15.5, "Giảm trừ người phụ thuộc": giam_tru,
+    return {"Tổng thu nhập": tong, "Bảo hiểm người lao động đóng": bao_hiem,
+            "Giảm trừ bản thân": giam_tru, "Giảm trừ người phụ thuộc": giam_tru_pt,
             "Thu nhập tính thuế": tinh_thue, "Thuế TNCN": thue,
-            "Tiền thực lãnh": tong - bh - thue}
+            "Tiền thực lãnh": tong - bao_hiem - thue}
 
 
-def tao_file_excel(df):
+def kiem_tra(df):
+    loi = []
+    for i, r in df.iterrows():
+        dong = i + 1
+        ten = str(r["Họ và tên"]).strip() if pd.notna(r["Họ và tên"]) else ""
+        if not ten:
+            loi.append(f"Dòng {dong}: thiếu họ tên")
+        email = str(r["Email cá nhân"]).strip() if pd.notna(r["Email cá nhân"]) else ""
+        if email and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+            loi.append(f"Dòng {dong}: email không hợp lệ")
+        ngay = str(r["Ngày sinh"]).strip() if pd.notna(r["Ngày sinh"]) else ""
+        if ngay:
+            try:
+                ngay_sinh = datetime.strptime(ngay, "%d/%m/%Y").date()
+                if ngay_sinh > date.today():
+                    loi.append(f"Dòng {dong}: ngày sinh ở tương lai")
+            except ValueError:
+                loi.append(f"Dòng {dong}: ngày sinh phải theo DD/MM/YYYY")
+        for c in COT_NHAP[4:]:
+            try:
+                v = float(r[c])
+                if not (0 <= v < float("inf")):
+                    raise ValueError
+                if c == "Số người phụ thuộc" and (not v.is_integer() or v > 100):
+                    raise ValueError
+            except (ValueError, TypeError):
+                loi.append(f"Dòng {dong}: {c} phải là số không âm hợp lệ")
+    return loi
+
+
+def tao_excel(df):
     buf = BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl", date_format="DD/MM/YYYY", datetime_format="DD/MM/YYYY") as writer:
-        for sheet_name, startrow in [("Bang luong", 2), ("Chi tiet", 0)]:
-            df.to_excel(writer, sheet_name=sheet_name, index=False, startrow=startrow)
-            ws = writer.sheets[sheet_name]
-            hr = startrow + 1
-            if startrow:
+    with pd.ExcelWriter(buf, engine="openpyxl", datetime_format="DD/MM/YYYY") as writer:
+        df.to_excel(writer, sheet_name="Bang luong", index=False, startrow=2)
+        df.to_excel(writer, sheet_name="Chi tiet", index=False)
+        for name, hr in (("Bang luong", 3), ("Chi tiet", 1)):
+            ws = writer.sheets[name]
+            if name == "Bang luong":
                 ws["A1"] = "BẢNG TỔNG HỢP LƯƠNG VÀ THUẾ TNCN"
-                ws["A1"].font = Font(size=16, bold=True, color="1F4E78")
-                ws["A2"] = "Đơn vị: triệu đồng/tháng | Ngày sinh: DD/MM/YYYY"
-            ws.row_dimensions[hr].height = 34
+                ws["A2"] = "Đơn vị tiền: triệu đồng/tháng"
             for cell in ws[hr]:
                 cell.font = Font(bold=True, color="FFFFFF")
                 cell.fill = PatternFill("solid", fgColor="1F4E78")
                 cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            ws.freeze_panes = f"E{hr + 1}"
+            ws.row_dimensions[hr].height = 32
+            ws.freeze_panes = f"A{hr+1}"
             ws.auto_filter.ref = f"A{hr}:{get_column_letter(ws.max_column)}{ws.max_row}"
-            for idx, name in enumerate(df.columns, start=1):
-                ws.column_dimensions[get_column_letter(idx)].width = (
-                    28 if name in ["Họ và tên", "Email cá nhân", "Chức vụ"] else
-                    17 if name == "Ngày sinh" else 24 if name in COT_TIEN else 20
-                )
-                for row in range(hr + 1, ws.max_row + 1):
-                    cell = ws.cell(row, idx)
-                    cell.alignment = Alignment(vertical="center")
-                    if name in COT_TIEN:
-                        cell.number_format = '#,##0.000;[Red]-#,##0.000;0.000'
-                    elif name == "Ngày sinh" and isinstance(cell.value, (date, datetime)):
-                        cell.number_format = "DD/MM/YYYY"
-            if sheet_name == "Bang luong":
-                total_row = ws.max_row + 1
-                ws.cell(total_row, 1, "TỔNG CỘNG")
-                for idx, name in enumerate(df.columns, start=1):
-                    if name in DAU_VAO_TIEN + ["Tổng thu nhập", "Bảo hiểm người lao động đóng", "Thuế TNCN", "Tiền thực lãnh"]:
-                        letter = get_column_letter(idx)
-                        cell = ws.cell(total_row, idx, f"=SUM({letter}{hr+1}:{letter}{total_row-1})")
-                        cell.number_format = '#,##0.000'
-                for cell in ws[total_row]:
-                    cell.font = Font(bold=True)
-                    cell.fill = PatternFill("solid", fgColor="D9EAF7")
+            for col_idx in range(1, ws.max_column + 1):
+                title = str(ws.cell(hr, col_idx).value)
+                ws.column_dimensions[get_column_letter(col_idx)].width = min(max(len(title) + 4, 18), 34)
+                if title in COT_TIEN:
+                    for row in range(hr+1, ws.max_row+1):
+                        ws.cell(row, col_idx).number_format = '#,##0.000;[Red]-#,##0.000;0.000'
+        ws = writer.sheets["Bang luong"]
+        end = ws.max_row
+        total_row = end + 1
+        ws.cell(total_row, 1, "TỔNG CỘNG")
+        for col_idx in range(1, ws.max_column+1):
+            title = ws.cell(3, col_idx).value
+            if title in COT_TIEN:
+                letter = get_column_letter(col_idx)
+                ws.cell(total_row, col_idx, f"=SUM({letter}4:{letter}{end})")
+                ws.cell(total_row, col_idx).number_format = '#,##0.000'
+            cell = ws.cell(total_row, col_idx)
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill("solid", fgColor="D9EAF7")
     return buf.getvalue()
 
 
-    # PDF: tự tìm font Unicode; nếu thiếu, tự tải font nguồn mở khi có mạng.
-def dang_ky_font_pdf():
-    if "PhieuLuongVN" in pdfmetrics.getRegisteredFontNames():
-        return "PhieuLuongVN"
-
-    import os
-    from urllib.request import Request, urlopen
-
-    thu_muc = Path(__file__).resolve().parent
-    thu_muc_font = thu_muc / ".pdf_fonts"
-    duong_dan = [
-        thu_muc / "NotoSans-Regular.ttf",
-        thu_muc / "DejaVuSans.ttf",
-        thu_muc_font / "DejaVuSans.ttf",
-        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
-        Path("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"),
-        Path("/usr/local/share/fonts/DejaVuSans.ttf"),
-    ]
-    # Một số nền tảng (PyCafe, Streamlit Cloud) lưu font ở đường dẫn khác.
-    try:
-        import matplotlib
-        duong_dan.append(Path(matplotlib.get_data_path()) / "fonts/ttf/DejaVuSans.ttf")
-    except ImportError:
-        pass
-
-    for folder in [Path("/usr/share/fonts"), Path("/usr/local/share/fonts")]:
-        if folder.exists():
-            duong_dan.extend(folder.rglob("DejaVuSans.ttf"))
-            duong_dan.extend(folder.rglob("NotoSans-Regular.ttf"))
-
-    for f in duong_dan:
-        if f.is_file():
-            try:
-                pdfmetrics.registerFont(TTFont("PhieuLuongVN", str(f)))
-                return "PhieuLuongVN"
-            except Exception:
-                continue
-
-    # Chỉ tải nếu môi trường không có sẵn font. Font được lưu cục bộ cho các lần sau.
-    url = "https://raw.githubusercontent.com/matplotlib/matplotlib/main/lib/matplotlib/mpl-data/fonts/ttf/DejaVuSans.ttf"
-    try:
-        thu_muc_font.mkdir(parents=True, exist_ok=True)
-        req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urlopen(req, timeout=12) as response:
-            font_data = response.read(3_000_000)
-        if len(font_data) < 10000:
-            raise ValueError("Dữ liệu font tải về không hợp lệ")
-font_path = thu_muc_font / "DejaVuSans.ttf"
-        font_path.write_bytes(font_data)
-        pdfmetrics.registerFont(TTFont("PhieuLuongVN", str(font_path)))
-        return "PhieuLuongVN"
-    except Exception as exc:
-        raise RuntimeError(
-            "Không tìm thấy font Unicode trên máy chủ và không thể tự tải font "
-            "(có thể do nền tảng chặn Internet). Hãy đặt DejaVuSans.ttf "
-            "hoặc NotoSans-Regular.ttf vào cùng thư mục app.py. "
-            f"Chi tiết: {exc}"
-        ) from exc
+def ascii_pdf(s):
+    """PDF dùng font chuẩn Helvetica: chuyển chữ có dấu sang không dấu."""
+    s = str(s).replace("đ", "d").replace("Đ", "D")
+    return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
 
 
-def dinh_dang_ngay(x):
-    return x.strftime("%d/%m/%Y") if isinstance(x, (date, datetime)) else "Chưa cung cấp"
-
-
-def tao_pdf_nhan_vien(nv):
+def tao_pdf(nv, ky_luong):
+    """Không dùng font ngoài; nội dung PDF tiếng Việt KHÔNG DẤU."""
     from xml.sax.saxutils import escape
-    font = dang_ky_font_pdf()
     buf = BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=42, leftMargin=42,
-                            topMargin=40, bottomMargin=38, title="Phiếu lương cá nhân")
-    normal = ParagraphStyle("NormalVN", fontName=font, fontSize=10, leading=16)
-    heading = ParagraphStyle("HeadingVN", parent=normal, fontSize=17,
-                             leading=24, alignment=TA_CENTER, textColor=colors.HexColor("#1F4E78"))
-    sub = ParagraphStyle("SubVN", parent=normal, fontSize=10,
-                         alignment=TA_CENTER, textColor=colors.grey)
-    label = ParagraphStyle("LabelVN", parent=normal, fontSize=10)
-    bold = ParagraphStyle("BoldVN", parent=normal, fontSize=11, textColor=colors.HexColor("#17365D"))
-    def para(value, style=normal):
-        return Paragraph(escape(str(value if value is not None else "")), style)
-    story = [para("PHIẾU LƯƠNG NHÂN VIÊN", heading),
-             para("SONG HÀO | Đơn vị tiền: triệu đồng/tháng", sub), Spacer(1, 18)]
-    info = [
-        ("Họ và tên", nv["Họ và tên"]),
-        ("Email cá nhân", nv.get("Email cá nhân") or "Chưa cung cấp"),
-        ("Ngày sinh", dinh_dang_ngay(nv.get("Ngày sinh"))),
-        ("Chức vụ", nv.get("Chức vụ") or "Chưa cung cấp"),
-        ("Số người phụ thuộc", str(int(nv["Số người phụ thuộc"]))),
-    ]
-      rows = [[para(k, label), para(v)] for k, v in info]
-    tbl = Table(rows, colWidths=[165, 345], hAlign="LEFT")
-    tbl.setStyle(TableStyle([("VALIGN", (0,0),(-1,-1),"TOP"),
-                             ("BOTTOMPADDING",(0,0),(-1,-1),8),
-                             ("LINEBELOW",(0,-1),(-1,-1),0.5,colors.HexColor("#CBD5E1"))]))
-    story += [tbl, Spacer(1, 17), para("CHI TIẾT THU NHẬP VÀ KHẤU TRỪ", bold), Spacer(1, 8)]
-    fields = ["Lương cơ bản", "Tiền thưởng", "Phụ cấp tính BHXH", "Phụ cấp không tính BHXH",
-              "Tổng thu nhập", "Bảo hiểm người lao động đóng", "Giảm trừ bản thân",
-              "Giảm trừ người phụ thuộc", "Thu nhập tính thuế", "Thuế TNCN", "Tiền thực lãnh"]
-    white = ParagraphStyle("PdfTableWhite", parent=normal, textColor=colors.white)
-    data = [[para("Khoản mục", white), para("Số tiền (triệu đồng)", white)]]
-    for key in fields:
-        data.append([para(key), para(dinh_dang_tien(float(nv[key])))])
-    money = Table(data, colWidths=[340,170], repeatRows=1)
-    money.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#1F4E78")),
-        ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-        ("ROWBACKGROUNDS",(0,1),(-1,-2),[colors.white,colors.HexColor("#F1F5F9")]),
-        ("BACKGROUND",(0,-1),(-1,-1),colors.HexColor("#D9EAF7")),
-        ("LINEBELOW",(0,-1),(-1,-1),0.8,colors.HexColor("#1F4E78")),
-        ("TOPPADDING",(0,0),(-1,-1),8),
-        ("BOTTOMPADDING",(0,0),(-1,-1),8),
-        ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18*mm, rightMargin=18*mm,
+                            topMargin=18*mm, bottomMargin=18*mm)
+    styles = getSampleStyleSheet()
+    elements = [Paragraph("PHIEU LUONG NHAN VIEN", styles["Title"]),
+                Paragraph("Ky luong: " + escape(ascii_pdf(ky_luong)), styles["Normal"]), Spacer(1, 8*mm)]
+    pairs = [("Ho va ten", nv["Họ và tên"]), ("Email ca nhan", nv["Email cá nhân"]),
+             ("Ngay sinh", nv["Ngày sinh"]), ("Chuc vu", nv["Chức vụ"])]
+    pairs += [(ascii_pdf(k), f"{float(nv[k]):,.3f} trieu dong") for k in COT_TIEN]
+    pairs.append(("So nguoi phu thuoc", str(int(nv["Số người phụ thuộc"]))))
+    data = [[Paragraph(escape(ascii_pdf(k)), styles["Normal"]),
+             Paragraph(escape(ascii_pdf(v)), styles["Normal"])] for k, v in pairs]
+    table = Table(data, colWidths=[70*mm, 100*mm], hAlign="LEFT", repeatRows=0)
+    table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.grey),
+        ("BACKGROUND", (0, -2), (-1, -2), colors.whitesmoke),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
     ]))
-    story += [money, Spacer(1, 18),
-              para("Phiếu lương được tạo tự động từ dữ liệu tính lương trong ứng dụng.", sub),
-              para("Số liệu dựa trên giả định của chương trình, cần kiểm tra trước khi sử dụng chính thức.", sub)]
-    doc.build(story)
+    elements.append(table)
+    elements.extend([Spacer(1, 8*mm), Paragraph(
+        "Luu y: PDF su dung tieng Viet khong dau do khong cai font Unicode.", styles["Italic"])])
+    doc.build(elements)
     return buf.getvalue()
 
 
-def ten_file_an_toan(name):
-    ascii_name = unicodedata.normalize("NFKD", str(name)).encode("ascii", "ignore").decode("ascii")
-    return re.sub(r"[^A-Za-z0-9_-]+", "_", ascii_name).strip("_")[:60] or "Nhan_vien"
+def ten_file(s):
+    return re.sub(r"[^a-zA-Z0-9_-]+", "_", ascii_pdf(s)).strip("_")[:60] or "nhan_vien"
 
 
-def tao_zip_phieu_luong(df):
+def tao_zip(df, ky):
     buf = BytesIO()
-    with ZipFile(buf, "w", compression=ZIP_DEFLATED) as zf:
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for i, (_, nv) in enumerate(df.iterrows(), start=1):
-            zf.writestr(f"{i:03d}_{ten_file_an_toan(nv['Họ và tên'])}.pdf", tao_pdf_nhan_vien(nv))
+            zf.writestr(f"{i:03d}_{ten_file(nv['Họ và tên'])}.pdf", tao_pdf(nv, ky))
     return buf.getvalue()
 
 
-def tao_du_lieu():
-    return pd.DataFrame({
-        "Họ và tên": [f"Nhân viên {i+1}" for i in range(500)],
-        "Email cá nhân": [""] * 500,
-        "Ngày sinh": [""] * 500,
-        "Chức vụ": ["Nhân viên"] * 500,
-        "Lương cơ bản": [15.0] * 500,
-        "Tiền thưởng": [2.0] * 500,
-        "Phụ cấp tính BHXH": [1.0] * 500,
-        "Phụ cấp không tính BHXH": [0.5] * 500,
-        "Số người phụ thuộc": [1] * 500,
-    })
+# ------------------- GIAO DIEN -------------------
+logo = Path(__file__).resolve().parent / "LOGO.jpg"
+if logo.exists():
+    st.image(str(logo), width=170)
+st.title("💰 PHẦN MỀM TÍNH TIỀN LƯƠNG")
+st.subheader("Song Hào")
+st.info("Đơn vị các khoản tiền: TRIỆU ĐỒNG/THÁNG. Thuế và giảm trừ theo công thức mẫu đã cung cấp; cần kiểm tra quy định hiện hành trước khi trả lương thực tế.")
+st.caption("PDF không dùng font bổ sung nên sẽ hiển thị tiếng Việt KHÔNG DẤU; Excel và giao diện vẫn đầy đủ dấu.")
 
+if "nhan_vien" not in st.session_state:
+    st.session_state.nhan_vien = du_lieu_mac_dinh()
+if "so_nv" not in st.session_state:
+    st.session_state.so_nv = 10
 
-    if "du_lieu_nhan_vien" not in st.session_state:
-    st.session_state.du_lieu_nhan_vien = tao_du_lieu()
-if "phien_ban_bang" not in st.session_state:
-    st.session_state.phien_ban_bang = 0
+st.subheader("1. Chọn số lượng người lao động")
+so_nv = st.number_input("Số nhân viên", min_value=1, max_value=MAX_NV, step=1, key="so_nv")
+ky_luong = st.text_input("Kỳ lương (ví dụ: 10/2026)", value=date.today().strftime("%m/%Y"))
 
-st.subheader("1. Chọn số lượng nhân viên")
-so_nhan_vien = int(st.number_input("Số nhân viên cần tính", min_value=1, max_value=500, value=10, step=1))
 st.subheader("2. Nhập thông tin nhân viên và tiền lương")
-st.caption("Chỉnh sửa trực tiếp như Excel; ngày sinh nhập DD/MM/YYYY, ví dụ 09/06/1998. Có thể dán nhiều ô từ Excel.")
+st.caption("Có thể dán nhiều ô từ Excel. Ngày sinh nhập dạng DD/MM/YYYY. Email và ngày sinh có thể để trống.")
 
-bang_goc = st.session_state.du_lieu_nhan_vien.iloc[:so_nhan_vien].copy()
-config = {
+bang = st.session_state.nhan_vien.iloc[:so_nv].copy()
+cfg = {
     "Họ và tên": st.column_config.TextColumn("Họ và tên", required=True, width="medium"),
     "Email cá nhân": st.column_config.TextColumn("Email cá nhân", width="medium"),
     "Ngày sinh": st.column_config.TextColumn("Ngày sinh (DD/MM/YYYY)", width="medium"),
     "Chức vụ": st.column_config.TextColumn("Chức vụ", width="medium"),
     "Số người phụ thuộc": st.column_config.NumberColumn("Số người phụ thuộc", min_value=0, max_value=100, step=1, format="%d"),
 }
-for c in DAU_VAO_TIEN:
-    config[c] = st.column_config.NumberColumn(c, min_value=0.0, step=0.1, format="%.3f")
+for c in COT_NHAP[4:8]:
+    cfg[c] = st.column_config.NumberColumn(c, min_value=0.0, step=0.1, format="%.3f")
 
-bang_nhap = st.data_editor(bang_goc, hide_index=True, use_container_width=True,
-                          num_rows="fixed", column_config=config,
-                          key=f"nhap_{so_nhan_vien}_{st.session_state.phien_ban_bang}")
-st.session_state.du_lieu_nhan_vien.iloc[:so_nhan_vien] = bang_nhap.to_numpy()
+bang_nhap = st.data_editor(bang, hide_index=True, use_container_width=True,
+                          num_rows="fixed", column_config=cfg, key=f"bang_{so_nv}")
+st.session_state.nhan_vien.iloc[:so_nv] = bang_nhap.to_numpy()
 
-# Kết quả chỉ được cập nhật sau khi nhấn nút TÍNH LƯƠNG.
 if st.button("🧮 TÍNH LƯƠNG TOÀN BỘ NHÂN VIÊN", type="primary", use_container_width=True):
-    loi = []
-    ban_sao = bang_nhap.copy()
-    ngay_sinh = []
-    for i, nv in ban_sao.iterrows():
-        so_dong = i + 1
-        ten = str(nv["Họ và tên"]).strip() if pd.notna(nv["Họ và tên"]) else ""
-        if not ten:
-            loi.append(f"Dòng {so_dong}: thiếu họ tên.")
-        email = str(nv["Email cá nhân"]).strip() if pd.notna(nv["Email cá nhân"]) else ""
-        if email and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
-            loi.append(f"Dòng {so_dong}: email không hợp lệ.")
-        ns = str(nv["Ngày sinh"]).strip() if pd.notna(nv["Ngày sinh"]) else ""
-        if ns:
-            try:
-                d = datetime.strptime(ns, "%d/%m/%Y").date()
-                if d > date.today():
-                    raise ValueError("future")
-                ngay_sinh.append(d)
-            except ValueError:
-                loi.append(f"Dòng {so_dong}: ngày sinh phải đúng DD/MM/YYYY và không ở tương lai.")
-                ngay_sinh.append(None)
-        else:
-            ngay_sinh.append(None)
-        for c in DAU_VAO_TIEN + ["Số người phụ thuộc"]:
-            val = pd.to_numeric(nv[c], errors="coerce")
-            if pd.isna(val) or val < 0:
-                loi.append(f"Dòng {so_dong}: {c} phải là số không âm.")
-            elif c == "Số người phụ thuộc" and val != int(val):
-                loi.append(f"Dòng {so_dong}: số người phụ thuộc phải là số nguyên.")
+    loi = kiem_tra(bang_nhap)
     if loi:
+        st.error("Dữ liệu chưa hợp lệ. Vui lòng sửa trước khi tính:")
         for item in loi[:15]:
-            st.error(item)
+            st.write("• " + item)
         if len(loi) > 15:
             st.warning(f"Còn {len(loi)-15} lỗi khác cần sửa.")
     else:
-        ban_sao["Ngày sinh"] = ngay_sinh
-        for c in DAU_VAO_TIEN:
-            ban_sao[c] = pd.to_numeric(ban_sao[c]).astype(float)
-        ban_sao["Số người phụ thuộc"] = pd.to_numeric(ban_sao["Số người phụ thuộc"]).astype(int)
-        kq = pd.DataFrame([tinh_luong(nv) for _, nv in ban_sao.iterrows()])
-        st.session_state.ket_qua_luong = pd.concat([ban_sao.reset_index(drop=True), kq], axis=1)
-        st.session_state.pop("zip_phieu_luong", None)
-        st.success("Đã tính xong bảng lương. Bạn có thể tải Excel, CSV và PDF bên dưới.")
+        rows = []
+        for _, nv in bang_nhap.iterrows():
+            r = nv.to_dict()
+            r.update(tinh_luong(nv))
+            rows.append(r)
+        st.session_state.ket_qua = pd.DataFrame(rows)
+        st.session_state.ky_da_tinh = ky_luong
+        st.success("Đã tính lương thành công!")
 
-        if "ket_qua_luong" in st.session_state:
-    df = st.session_state.ket_qua_luong
-    st.divider()
-    st.subheader("3. Kết quả tính lương")
+if "ket_qua" in st.session_state:
+    df = st.session_state.ket_qua
+    ky = st.session_state.get("ky_da_tinh", ky_luong)
+    st.subheader("3. Bảng kết quả tính lương")
     a, b, c, d = st.columns(4)
     a.metric("Số nhân viên", len(df))
-    b.metric("Tổng thu nhập", f'{dinh_dang_tien(df["Tổng thu nhập"].sum())} triệu')
-    c.metric("Tổng thuế TNCN", f'{dinh_dang_tien(df["Thuế TNCN"].sum())} triệu')
-    d.metric("Tổng thực lãnh", f'{dinh_dang_tien(df["Tiền thực lãnh"].sum())} triệu')
-    hien_thi = df.copy()
-    hien_thi["Ngày sinh"] = hien_thi["Ngày sinh"].apply(lambda x: x.strftime("%d/%m/%Y") if isinstance(x, (date, datetime)) else "")
-    st.dataframe(hien_thi, use_container_width=True, hide_index=True,
-                 column_config={c: st.column_config.NumberColumn(c, format="%.3f") for c in COT_TIEN})
-    st.subheader("4. Xuất dữ liệu")
-    st.download_button("📥 TẢI FILE EXCEL (.xlsx)", data=tao_file_excel(df),
-                       file_name="bang_luong_nhan_vien.xlsx",
+    b.metric("Tổng thu nhập", f"{df['Tổng thu nhập'].sum():,.3f} triệu")
+    c.metric("Tổng thuế TNCN", f"{df['Thuế TNCN'].sum():,.3f} triệu")
+    d.metric("Tổng thực lãnh", f"{df['Tiền thực lãnh'].sum():,.3f} triệu")
+    st.dataframe(df, hide_index=True, use_container_width=True)
+
+    st.subheader("4. Xuất bảng lương Excel / CSV")
+    st.download_button("📥 TẢI FILE EXCEL (.xlsx)", data=tao_excel(df),
+                       file_name="bang_luong.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        use_container_width=True)
-    st.download_button("📥 TẢI FILE CSV", data=hien_thi.to_csv(index=False).encode("utf-8-sig"),
-                       file_name="bang_luong_nhan_vien.csv", mime="text/csv", use_container_width=True)
-    st.subheader("5. Xuất phiếu lương PDF từng nhân viên")
-    chon_nv = st.selectbox("Chọn nhân viên để tải phiếu lương PDF", options=list(range(len(df))),
-                           format_func=lambda i: f"{i+1:03d} - {df.iloc[i]['Họ và tên']}")
-    try:
-        pdf = tao_pdf_nhan_vien(df.iloc[chon_nv])
-        st.download_button("📄 TẢI PHIẾU LƯƠNG PDF CỦA NHÂN VIÊN ĐÃ CHỌN",
-                           data=pdf, file_name=f"phieu_luong_{chon_nv+1:03d}_{ten_file_an_toan(df.iloc[chon_nv]['Họ và tên'])}.pdf",
-                           mime="application/pdf", use_container_width=True)
-        if st.button("📦 TẠO FILE ZIP CHỨA PDF CỦA TẤT CẢ NHÂN VIÊN", use_container_width=True):
-            with st.spinner("Đang tạo các phiếu lương PDF..."):
-                st.session_state.zip_phieu_luong = tao_zip_phieu_luong(df)
-        if "zip_phieu_luong" in st.session_state:
-            st.download_button("⬇️ TẢI FILE ZIP PHIẾU LƯƠNG", data=st.session_state.zip_phieu_luong,
-                               file_name="phieu_luong_tat_ca_nhan_vien.zip", mime="application/zip",
-                               use_container_width=True)
-    except Exception as exc:
-        st.error(f"Chưa thể tạo PDF: {exc}")
-    st.caption("Sau khi sửa dữ liệu nhập, nhấn TÍNH LƯƠNG lại để cập nhật kết quả và file xuất.")
+    st.download_button("📥 TẢI FILE CSV", data=df.to_csv(index=False).encode("utf-8-sig"),
+                       file_name="bang_luong.csv", mime="text/csv", use_container_width=True)
 
-with st.expander("📘 Công thức đang sử dụng"):
+    st.subheader("5. Xuất PDF phiếu lương từng nhân viên")
+    st.warning("PDF không dấu để tránh phụ thuộc vào font Unicode. Excel vẫn giữ tiếng Việt có dấu.")
+    lua_chon = st.selectbox("Chọn nhân viên", options=list(range(len(df))),
+                           format_func=lambda i: f"{i+1}. {df.iloc[i]['Họ và tên']}")
+    nv_chon = df.iloc[lua_chon]
+    st.download_button("📄 TẢI PDF NHÂN VIÊN ĐÃ CHỌN", data=tao_pdf(nv_chon, ky),
+                       file_name=f"phieu_luong_{lua_chon+1:03d}_{ten_file(nv_chon['Họ và tên'])}.pdf",
+                       mime="application/pdf", use_container_width=True)
+    st.download_button("📦 TẢI ZIP PDF CỦA TẤT CẢ NHÂN VIÊN", data=tao_zip(df, ky),
+                       file_name="phieu_luong_tat_ca.zip", mime="application/zip", use_container_width=True)
+    st.caption("Nếu sửa dữ liệu đầu vào, hãy nhấn TÍNH LƯƠNG lại để cập nhật file xuất.")
+
+with st.expander("📘 Công thức tính lương đang áp dụng"):
     st.markdown("""
-    - **Tổng thu nhập:** Lương cơ bản + Thưởng + Phụ cấp tính BHXH + Phụ cấp không tính BHXH.
-    - **Bảo hiểm người lao động đóng:** (Lương cơ bản + Phụ cấp tính BHXH) × 10,5%.
-    - **Thu nhập tính thuế:** MAX(0; Tổng thu nhập − 15,5 − 6,2 × Số người phụ thuộc − Bảo hiểm).
-    - **Thuế TNCN:** Tính theo biểu thuế lũy tiến được giữ từ chương trình gốc.
-    - **Tiền thực lãnh:** Tổng thu nhập − Bảo hiểm − Thuế TNCN.
+    - Tổng thu nhập = Lương cơ bản + Thưởng + Phụ cấp tính BHXH + Phụ cấp không tính BHXH.
+    - Bảo hiểm người lao động đóng = (Lương cơ bản + Phụ cấp tính BHXH) × 10,5%.
+    - Thu nhập tính thuế = max(0, Tổng thu nhập − Bảo hiểm − 15,5 − 6,2 × Số người phụ thuộc).
+    - Thuế TNCN tính theo biểu thuế mẫu 5 bậc trong mã nguồn.
+    - Tiền thực lãnh = Tổng thu nhập − Bảo hiểm − Thuế TNCN.
 
-    **Lưu ý:** Đây là mô hình tính lương theo giả định; chưa xử lý mọi trường hợp miễn thuế, mức trần bảo hiểm và cơ sở tính đóng bảo hiểm.
+    **Lưu ý:** Các mức và giả định chưa được kiểm chứng cho từng tình huống trả lương.
     """)
-
-
-# PDF: tự tìm font Unicode; nếu thiếu, tự tải font nguồn mở khi có mạng.
+    
