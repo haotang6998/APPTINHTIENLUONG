@@ -22,13 +22,14 @@ MAX_NV = 500
 COT_TIEN = ["Lương cơ bản", "Tiền thưởng", "Phụ cấp tính BHXH", "Phụ cấp không tính BHXH",
             "Tổng thu nhập", "Bảo hiểm người lao động đóng", "Giảm trừ bản thân",
             "Giảm trừ người phụ thuộc", "Thu nhập tính thuế", "Thuế TNCN", "Tiền thực lãnh"]
-COT_NHAP = ["Họ và tên", "Email cá nhân", "Ngày sinh", "Chức vụ", "Lương cơ bản", "Tiền thưởng",
+COT_NHAP = ["Họ và tên", "Số điện thoại Zalo", "Email cá nhân", "Ngày sinh", "Chức vụ", "Lương cơ bản", "Tiền thưởng",
             "Phụ cấp tính BHXH", "Phụ cấp không tính BHXH", "Số người phụ thuộc"]
 
 
 def du_lieu_mac_dinh():
     return pd.DataFrame({
         "Họ và tên": [f"Nhân viên {i+1}" for i in range(MAX_NV)],
+        "Số điện thoại Zalo": [""] * MAX_NV,
         "Email cá nhân": [""] * MAX_NV,
         "Ngày sinh": [""] * MAX_NV,
         "Chức vụ": [""] * MAX_NV,
