@@ -318,7 +318,7 @@ if st.button("🧮 TÍNH LƯƠNG TOÀN BỘ NHÂN VIÊN", type="primary", use_co
     if loi:
         for item in loi[:15]:
             st.error(item)
-            if len(loi) > 15:
+    if len(loi) > 15:
             st.warning(f"Còn {len(loi)-15} lỗi khác cần sửa.")
     else:
         ban_sao["Ngày sinh"] = ngay_sinh
