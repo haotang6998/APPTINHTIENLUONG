@@ -1,7 +1,7 @@
 import re
 from datetime import date, datetime
 from io import BytesIO
-from zipfile import ZipFile
+from zipfile import ZipFile, ZIP_DEFLATED
 import unicodedata
 
 from reportlab.lib import colors
@@ -111,7 +111,7 @@ def tao_file_excel(df):
     return buf.getvalue()
 
 
-# PDF: tự tìm font Unicode; nếu thiếu, tự tải font nguồn mở khi có mạng.
+    # PDF: tự tìm font Unicode; nếu thiếu, tự tải font nguồn mở khi có mạng.
 def dang_ky_font_pdf():
     if "PhieuLuongVN" in pdfmetrics.getRegisteredFontNames():
         return "PhieuLuongVN"
@@ -158,7 +158,7 @@ def dang_ky_font_pdf():
             font_data = response.read(3_000_000)
         if len(font_data) < 10000:
             raise ValueError("Dữ liệu font tải về không hợp lệ")
-            font_path = thu_muc_font / "DejaVuSans.ttf"
+font_path = thu_muc_font / "DejaVuSans.ttf"
         font_path.write_bytes(font_data)
         pdfmetrics.registerFont(TTFont("PhieuLuongVN", str(font_path)))
         return "PhieuLuongVN"
@@ -199,7 +199,7 @@ def tao_pdf_nhan_vien(nv):
         ("Chức vụ", nv.get("Chức vụ") or "Chưa cung cấp"),
         ("Số người phụ thuộc", str(int(nv["Số người phụ thuộc"]))),
     ]
-    rows = [[para(k, label), para(v)] for k, v in info]
+      rows = [[para(k, label), para(v)] for k, v in info]
     tbl = Table(rows, colWidths=[165, 345], hAlign="LEFT")
     tbl.setStyle(TableStyle([("VALIGN", (0,0),(-1,-1),"TOP"),
                              ("BOTTOMPADDING",(0,0),(-1,-1),8),
@@ -208,7 +208,8 @@ def tao_pdf_nhan_vien(nv):
     fields = ["Lương cơ bản", "Tiền thưởng", "Phụ cấp tính BHXH", "Phụ cấp không tính BHXH",
               "Tổng thu nhập", "Bảo hiểm người lao động đóng", "Giảm trừ bản thân",
               "Giảm trừ người phụ thuộc", "Thu nhập tính thuế", "Thuế TNCN", "Tiền thực lãnh"]
-    data = [[para("Khoản mục"), para("Số tiền (triệu đồng)")]]
+    white = ParagraphStyle("PdfTableWhite", parent=normal, textColor=colors.white)
+    data = [[para("Khoản mục", white), para("Số tiền (triệu đồng)", white)]]
     for key in fields:
         data.append([para(key), para(dinh_dang_tien(float(nv[key])))])
     money = Table(data, colWidths=[340,170], repeatRows=1)
@@ -222,9 +223,6 @@ def tao_pdf_nhan_vien(nv):
         ("BOTTOMPADDING",(0,0),(-1,-1),8),
         ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
     ]))
-    # ReportLab Paragraph giữ màu riêng nên tô tiêu đề trực tiếp bằng style chữ trắng.
-    data[0] = [para("Khoản mục", ParagraphStyle("WhiteLeft",parent=normal,textColor=colors.white)),
-               para("Số tiền (triệu đồng)", ParagraphStyle("WhiteRight",parent=normal,textColor=colors.white))]
     story += [money, Spacer(1, 18),
               para("Phiếu lương được tạo tự động từ dữ liệu tính lương trong ứng dụng.", sub),
               para("Số liệu dựa trên giả định của chương trình, cần kiểm tra trước khi sử dụng chính thức.", sub)]
@@ -239,7 +237,7 @@ def ten_file_an_toan(name):
 
 def tao_zip_phieu_luong(df):
     buf = BytesIO()
-    with ZipFile(buf, "w") as zf:
+    with ZipFile(buf, "w", compression=ZIP_DEFLATED) as zf:
         for i, (_, nv) in enumerate(df.iterrows(), start=1):
             zf.writestr(f"{i:03d}_{ten_file_an_toan(nv['Họ và tên'])}.pdf", tao_pdf_nhan_vien(nv))
     return buf.getvalue()
@@ -259,7 +257,7 @@ def tao_du_lieu():
     })
 
 
-if "du_lieu_nhan_vien" not in st.session_state:
+    if "du_lieu_nhan_vien" not in st.session_state:
     st.session_state.du_lieu_nhan_vien = tao_du_lieu()
 if "phien_ban_bang" not in st.session_state:
     st.session_state.phien_ban_bang = 0
@@ -285,6 +283,7 @@ bang_nhap = st.data_editor(bang_goc, hide_index=True, use_container_width=True,
                           key=f"nhap_{so_nhan_vien}_{st.session_state.phien_ban_bang}")
 st.session_state.du_lieu_nhan_vien.iloc[:so_nhan_vien] = bang_nhap.to_numpy()
 
+# Kết quả chỉ được cập nhật sau khi nhấn nút TÍNH LƯƠNG.
 if st.button("🧮 TÍNH LƯƠNG TOÀN BỘ NHÂN VIÊN", type="primary", use_container_width=True):
     loi = []
     ban_sao = bang_nhap.copy()
@@ -318,7 +317,7 @@ if st.button("🧮 TÍNH LƯƠNG TOÀN BỘ NHÂN VIÊN", type="primary", use_co
     if loi:
         for item in loi[:15]:
             st.error(item)
-    if len(loi) > 15:
+        if len(loi) > 15:
             st.warning(f"Còn {len(loi)-15} lỗi khác cần sửa.")
     else:
         ban_sao["Ngày sinh"] = ngay_sinh
@@ -328,9 +327,9 @@ if st.button("🧮 TÍNH LƯƠNG TOÀN BỘ NHÂN VIÊN", type="primary", use_co
         kq = pd.DataFrame([tinh_luong(nv) for _, nv in ban_sao.iterrows()])
         st.session_state.ket_qua_luong = pd.concat([ban_sao.reset_index(drop=True), kq], axis=1)
         st.session_state.pop("zip_phieu_luong", None)
-        st.success("Đã tính xong bảng lương. Bạn có thể tải file Excel bên dưới.")
+        st.success("Đã tính xong bảng lương. Bạn có thể tải Excel, CSV và PDF bên dưới.")
 
-if "ket_qua_luong" in st.session_state:
+        if "ket_qua_luong" in st.session_state:
     df = st.session_state.ket_qua_luong
     st.divider()
     st.subheader("3. Kết quả tính lương")
@@ -365,7 +364,7 @@ if "ket_qua_luong" in st.session_state:
             st.download_button("⬇️ TẢI FILE ZIP PHIẾU LƯƠNG", data=st.session_state.zip_phieu_luong,
                                file_name="phieu_luong_tat_ca_nhan_vien.zip", mime="application/zip",
                                use_container_width=True)
-    except (FileNotFoundError, ImportError) as exc:
+    except Exception as exc:
         st.error(f"Chưa thể tạo PDF: {exc}")
     st.caption("Sau khi sửa dữ liệu nhập, nhấn TÍNH LƯƠNG lại để cập nhật kết quả và file xuất.")
 
@@ -376,4 +375,9 @@ with st.expander("📘 Công thức đang sử dụng"):
     - **Thu nhập tính thuế:** MAX(0; Tổng thu nhập − 15,5 − 6,2 × Số người phụ thuộc − Bảo hiểm).
     - **Thuế TNCN:** Tính theo biểu thuế lũy tiến được giữ từ chương trình gốc.
     - **Tiền thực lãnh:** Tổng thu nhập − Bảo hiểm − Thuế TNCN.
-        """)
+
+    **Lưu ý:** Đây là mô hình tính lương theo giả định; chưa xử lý mọi trường hợp miễn thuế, mức trần bảo hiểm và cơ sở tính đóng bảo hiểm.
+    """)
+
+
+# PDF: tự tìm font Unicode; nếu thiếu, tự tải font nguồn mở khi có mạng.
