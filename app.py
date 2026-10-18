@@ -469,16 +469,32 @@ if "ket_qua" in st.session_state:
                            file_name="bao_cao_gui_phieu_luong.csv", mime="text/csv")
         st.caption("Báo cáo chỉ tồn tại trong phiên làm việc này. Không tự gửi lại email đã được SMTP chấp nhận trong cùng đợt.")
 
-# KIỂM TRA CẤU HÌNH SUPABASE
-with st.expander("🔗 Kiểm tra cấu hình Supabase"):
+
+# KIỂM TRA KẾT NỐI SUPABASE
+with st.expander("🔗 Kiểm tra kết nối Supabase"):
     try:
+        import requests
+
         sb = st.secrets["supabase"]
-        url = str(sb["url"]).strip()
+        url = str(sb["url"]).strip().rstrip("/")
         key = str(sb["secret_key"]).strip()
 
-        if url.startswith("https://") and key:
-            st.success("OK - Đã đọc được cấu hình Supabase")
+        response = requests.get(
+            f"{url}/rest/v1/zalo_salary_jobs",
+            headers={
+                "apikey": key,
+                "Authorization": f"Bearer {key}"
+            },
+            params={"select": "id", "limit": "1"},
+            timeout=15
+        )
+
+        if response.status_code == 200:
+            st.success("OK - Đã kết nối thành công với Supabase")
         else:
-            st.error("Error - URL hoặc Secret Key không hợp lệ")
-    except (KeyError, FileNotFoundError, AttributeError):
-        st.error("Error - Không tìm thấy cấu hình Supabase")
+            st.error(
+                f"Error - Supabase trả về HTTP {response.status_code}"
+            )
+
+    except Exception as e:
+        st.error(f"Error - {type(e).__name__}")
