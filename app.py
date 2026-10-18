@@ -247,7 +247,7 @@ bang_nhap = st.data_editor(bang_goc, hide_index=True, use_container_width=True,
 st.session_state.du_lieu_nhan_vien.iloc[:so_nhan_vien] = bang_nhap.to_numpy()
 
 if st.button("🧮 TÍNH LƯƠNG TOÀN BỘ NHÂN VIÊN", type="primary", use_container_width=True):
-   loi = []
+    loi = []
     ban_sao = bang_nhap.copy()
     ngay_sinh = []
     for i, nv in ban_sao.iterrows():
