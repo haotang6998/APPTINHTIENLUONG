@@ -7,7 +7,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("💰 TINH THUE THU NHAP CA NHAN")
+st.title("💰 Phần mềm tính tiền lương- Song Hào")
 st.subheader("Tinh luong va thu nhap thuc lanh nam 2026")
 st.info("Don vi nhap: Trieu dong / thang")
 
