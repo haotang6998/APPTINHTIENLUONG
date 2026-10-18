@@ -1,5 +1,7 @@
 
 import streamlit as st
+import os
+st.image("IMG_2692.jpeg")
 import pandas as pd
 from pathlib import Path
 from io import BytesIO
