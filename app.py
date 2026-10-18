@@ -78,7 +78,7 @@ def tao_file_excel(df):
                 ws["A1"] = "BẢNG TỔNG HỢP LƯƠNG VÀ THUẾ TNCN"
                 ws["A1"].font = Font(size=16, bold=True, color="1F4E78")
                 ws["A2"] = "Đơn vị: triệu đồng/tháng | Ngày sinh: DD/MM/YYYY"
-                  ws.row_dimensions[hr].height = 34
+            ws.row_dimensions[hr].height = 34
             for cell in ws[hr]:
                 cell.font = Font(bold=True, color="FFFFFF")
                 cell.fill = PatternFill("solid", fgColor="1F4E78")
