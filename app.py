@@ -78,7 +78,7 @@ def tao_file_excel(df):
                 ws["A1"] = "BẢNG TỔNG HỢP LƯƠNG VÀ THUẾ TNCN"
                 ws["A1"].font = Font(size=16, bold=True, color="1F4E78")
                 ws["A2"] = "Đơn vị: triệu đồng/tháng | Ngày sinh: DD/MM/YYYY"
-            ws.row_dimensions[hr].height = 34
+                  ws.row_dimensions[hr].height = 34
             for cell in ws[hr]:
                 cell.font = Font(bold=True, color="FFFFFF")
                 cell.fill = PatternFill("solid", fgColor="1F4E78")
@@ -111,25 +111,64 @@ def tao_file_excel(df):
     return buf.getvalue()
 
 
-# PDF: cần cài reportlab và có phông chữ Unicode để hiển thị tiếng Việt.
+# PDF: tự tìm font Unicode; nếu thiếu, tự tải font nguồn mở khi có mạng.
 def dang_ky_font_pdf():
     if "PhieuLuongVN" in pdfmetrics.getRegisteredFontNames():
         return "PhieuLuongVN"
+
+    import os
+    from urllib.request import Request, urlopen
+
     thu_muc = Path(__file__).resolve().parent
+    thu_muc_font = thu_muc / ".pdf_fonts"
     duong_dan = [
         thu_muc / "NotoSans-Regular.ttf",
         thu_muc / "DejaVuSans.ttf",
+        thu_muc_font / "DejaVuSans.ttf",
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
         Path("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"),
+        Path("/usr/local/share/fonts/DejaVuSans.ttf"),
     ]
+    # Một số nền tảng (PyCafe, Streamlit Cloud) lưu font ở đường dẫn khác.
+    try:
+        import matplotlib
+        duong_dan.append(Path(matplotlib.get_data_path()) / "fonts/ttf/DejaVuSans.ttf")
+    except ImportError:
+        pass
+
+    for folder in [Path("/usr/share/fonts"), Path("/usr/local/share/fonts")]:
+        if folder.exists():
+            duong_dan.extend(folder.rglob("DejaVuSans.ttf"))
+            duong_dan.extend(folder.rglob("NotoSans-Regular.ttf"))
+
     for f in duong_dan:
         if f.is_file():
-            pdfmetrics.registerFont(TTFont("PhieuLuongVN", str(f)))
-            return "PhieuLuongVN"
-    raise FileNotFoundError(
-        "Không tìm thấy font Unicode. Hãy đặt file NotoSans-Regular.ttf "
-        "hoặc DejaVuSans.ttf cùng thư mục app.py để xuất PDF tiếng Việt."
-    )
+            try:
+                pdfmetrics.registerFont(TTFont("PhieuLuongVN", str(f)))
+                return "PhieuLuongVN"
+            except Exception:
+                continue
+
+    # Chỉ tải nếu môi trường không có sẵn font. Font được lưu cục bộ cho các lần sau.
+    url = "https://raw.githubusercontent.com/matplotlib/matplotlib/main/lib/matplotlib/mpl-data/fonts/ttf/DejaVuSans.ttf"
+    try:
+        thu_muc_font.mkdir(parents=True, exist_ok=True)
+        req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urlopen(req, timeout=12) as response:
+            font_data = response.read(3_000_000)
+        if len(font_data) < 10000:
+            raise ValueError("Dữ liệu font tải về không hợp lệ")
+            font_path = thu_muc_font / "DejaVuSans.ttf"
+        font_path.write_bytes(font_data)
+        pdfmetrics.registerFont(TTFont("PhieuLuongVN", str(font_path)))
+        return "PhieuLuongVN"
+    except Exception as exc:
+        raise RuntimeError(
+            "Không tìm thấy font Unicode trên máy chủ và không thể tự tải font "
+            "(có thể do nền tảng chặn Internet). Hãy đặt DejaVuSans.ttf "
+            "hoặc NotoSans-Regular.ttf vào cùng thư mục app.py. "
+            f"Chi tiết: {exc}"
+        ) from exc
 
 
 def dinh_dang_ngay(x):
@@ -279,7 +318,7 @@ if st.button("🧮 TÍNH LƯƠNG TOÀN BỘ NHÂN VIÊN", type="primary", use_co
     if loi:
         for item in loi[:15]:
             st.error(item)
-        if len(loi) > 15:
+            if len(loi) > 15:
             st.warning(f"Còn {len(loi)-15} lỗi khác cần sửa.")
     else:
         ban_sao["Ngày sinh"] = ngay_sinh
@@ -337,4 +376,4 @@ with st.expander("📘 Công thức đang sử dụng"):
     - **Thu nhập tính thuế:** MAX(0; Tổng thu nhập − 15,5 − 6,2 × Số người phụ thuộc − Bảo hiểm).
     - **Thuế TNCN:** Tính theo biểu thuế lũy tiến được giữ từ chương trình gốc.
     - **Tiền thực lãnh:** Tổng thu nhập − Bảo hiểm − Thuế TNCN.
-      """)
+        """)
