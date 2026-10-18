@@ -6,7 +6,7 @@ st.set_page_config(
     page_icon="💰",
     layout="wide"
 )
-
+st.image("IMG_2692.jpeg")
 st.title("💰 Phần mềm tính tiền lương- Song Hào")
 st.subheader("Tinh luong va thu nhap thuc lanh nam 2026")
 st.info("Don vi nhap: Trieu dong / thang")
