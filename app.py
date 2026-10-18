@@ -1,6 +1,17 @@
 import re
 from datetime import date, datetime
 from io import BytesIO
+from zipfile import ZipFile
+import unicodedata
+
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.utils import simpleSplit
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
 from pathlib import Path
 
 import pandas as pd
@@ -99,6 +110,102 @@ def tao_file_excel(df):
                     cell.fill = PatternFill("solid", fgColor="D9EAF7")
     return buf.getvalue()
 
+
+# PDF: cần cài reportlab và có phông chữ Unicode để hiển thị tiếng Việt.
+def dang_ky_font_pdf():
+    if "PhieuLuongVN" in pdfmetrics.getRegisteredFontNames():
+        return "PhieuLuongVN"
+    thu_muc = Path(__file__).resolve().parent
+    duong_dan = [
+        thu_muc / "NotoSans-Regular.ttf",
+        thu_muc / "DejaVuSans.ttf",
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+        Path("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"),
+    ]
+    for f in duong_dan:
+        if f.is_file():
+            pdfmetrics.registerFont(TTFont("PhieuLuongVN", str(f)))
+            return "PhieuLuongVN"
+    raise FileNotFoundError(
+        "Không tìm thấy font Unicode. Hãy đặt file NotoSans-Regular.ttf "
+        "hoặc DejaVuSans.ttf cùng thư mục app.py để xuất PDF tiếng Việt."
+    )
+
+
+def dinh_dang_ngay(x):
+    return x.strftime("%d/%m/%Y") if isinstance(x, (date, datetime)) else "Chưa cung cấp"
+
+
+def tao_pdf_nhan_vien(nv):
+    from xml.sax.saxutils import escape
+    font = dang_ky_font_pdf()
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=42, leftMargin=42,
+                            topMargin=40, bottomMargin=38, title="Phiếu lương cá nhân")
+    normal = ParagraphStyle("NormalVN", fontName=font, fontSize=10, leading=16)
+    heading = ParagraphStyle("HeadingVN", parent=normal, fontSize=17,
+                             leading=24, alignment=TA_CENTER, textColor=colors.HexColor("#1F4E78"))
+    sub = ParagraphStyle("SubVN", parent=normal, fontSize=10,
+                         alignment=TA_CENTER, textColor=colors.grey)
+    label = ParagraphStyle("LabelVN", parent=normal, fontSize=10)
+    bold = ParagraphStyle("BoldVN", parent=normal, fontSize=11, textColor=colors.HexColor("#17365D"))
+    def para(value, style=normal):
+        return Paragraph(escape(str(value if value is not None else "")), style)
+    story = [para("PHIẾU LƯƠNG NHÂN VIÊN", heading),
+             para("SONG HÀO | Đơn vị tiền: triệu đồng/tháng", sub), Spacer(1, 18)]
+    info = [
+        ("Họ và tên", nv["Họ và tên"]),
+        ("Email cá nhân", nv.get("Email cá nhân") or "Chưa cung cấp"),
+        ("Ngày sinh", dinh_dang_ngay(nv.get("Ngày sinh"))),
+        ("Chức vụ", nv.get("Chức vụ") or "Chưa cung cấp"),
+        ("Số người phụ thuộc", str(int(nv["Số người phụ thuộc"]))),
+    ]
+    rows = [[para(k, label), para(v)] for k, v in info]
+    tbl = Table(rows, colWidths=[165, 345], hAlign="LEFT")
+    tbl.setStyle(TableStyle([("VALIGN", (0,0),(-1,-1),"TOP"),
+                             ("BOTTOMPADDING",(0,0),(-1,-1),8),
+                             ("LINEBELOW",(0,-1),(-1,-1),0.5,colors.HexColor("#CBD5E1"))]))
+    story += [tbl, Spacer(1, 17), para("CHI TIẾT THU NHẬP VÀ KHẤU TRỪ", bold), Spacer(1, 8)]
+    fields = ["Lương cơ bản", "Tiền thưởng", "Phụ cấp tính BHXH", "Phụ cấp không tính BHXH",
+              "Tổng thu nhập", "Bảo hiểm người lao động đóng", "Giảm trừ bản thân",
+              "Giảm trừ người phụ thuộc", "Thu nhập tính thuế", "Thuế TNCN", "Tiền thực lãnh"]
+    data = [[para("Khoản mục"), para("Số tiền (triệu đồng)")]]
+    for key in fields:
+        data.append([para(key), para(dinh_dang_tien(float(nv[key])))])
+    money = Table(data, colWidths=[340,170], repeatRows=1)
+    money.setStyle(TableStyle([
+        ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#1F4E78")),
+        ("TEXTCOLOR",(0,0),(-1,0),colors.white),
+        ("ROWBACKGROUNDS",(0,1),(-1,-2),[colors.white,colors.HexColor("#F1F5F9")]),
+        ("BACKGROUND",(0,-1),(-1,-1),colors.HexColor("#D9EAF7")),
+        ("LINEBELOW",(0,-1),(-1,-1),0.8,colors.HexColor("#1F4E78")),
+        ("TOPPADDING",(0,0),(-1,-1),8),
+        ("BOTTOMPADDING",(0,0),(-1,-1),8),
+        ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+    ]))
+    # ReportLab Paragraph giữ màu riêng nên tô tiêu đề trực tiếp bằng style chữ trắng.
+    data[0] = [para("Khoản mục", ParagraphStyle("WhiteLeft",parent=normal,textColor=colors.white)),
+               para("Số tiền (triệu đồng)", ParagraphStyle("WhiteRight",parent=normal,textColor=colors.white))]
+    story += [money, Spacer(1, 18),
+              para("Phiếu lương được tạo tự động từ dữ liệu tính lương trong ứng dụng.", sub),
+              para("Số liệu dựa trên giả định của chương trình, cần kiểm tra trước khi sử dụng chính thức.", sub)]
+    doc.build(story)
+    return buf.getvalue()
+
+
+def ten_file_an_toan(name):
+    ascii_name = unicodedata.normalize("NFKD", str(name)).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", ascii_name).strip("_")[:60] or "Nhan_vien"
+
+
+def tao_zip_phieu_luong(df):
+    buf = BytesIO()
+    with ZipFile(buf, "w") as zf:
+        for i, (_, nv) in enumerate(df.iterrows(), start=1):
+            zf.writestr(f"{i:03d}_{ten_file_an_toan(nv['Họ và tên'])}.pdf", tao_pdf_nhan_vien(nv))
+    return buf.getvalue()
+
+
 def tao_du_lieu():
     return pd.DataFrame({
         "Họ và tên": [f"Nhân viên {i+1}" for i in range(500)],
@@ -174,13 +281,14 @@ if st.button("🧮 TÍNH LƯƠNG TOÀN BỘ NHÂN VIÊN", type="primary", use_co
             st.error(item)
         if len(loi) > 15:
             st.warning(f"Còn {len(loi)-15} lỗi khác cần sửa.")
-    else:
+            else:
         ban_sao["Ngày sinh"] = ngay_sinh
         for c in DAU_VAO_TIEN:
             ban_sao[c] = pd.to_numeric(ban_sao[c]).astype(float)
         ban_sao["Số người phụ thuộc"] = pd.to_numeric(ban_sao["Số người phụ thuộc"]).astype(int)
         kq = pd.DataFrame([tinh_luong(nv) for _, nv in ban_sao.iterrows()])
         st.session_state.ket_qua_luong = pd.concat([ban_sao.reset_index(drop=True), kq], axis=1)
+        st.session_state.pop("zip_phieu_luong", None)
         st.success("Đã tính xong bảng lương. Bạn có thể tải file Excel bên dưới.")
 
 if "ket_qua_luong" in st.session_state:
@@ -203,6 +311,23 @@ if "ket_qua_luong" in st.session_state:
                        use_container_width=True)
     st.download_button("📥 TẢI FILE CSV", data=hien_thi.to_csv(index=False).encode("utf-8-sig"),
                        file_name="bang_luong_nhan_vien.csv", mime="text/csv", use_container_width=True)
+    st.subheader("5. Xuất phiếu lương PDF từng nhân viên")
+    chon_nv = st.selectbox("Chọn nhân viên để tải phiếu lương PDF", options=list(range(len(df))),
+                           format_func=lambda i: f"{i+1:03d} - {df.iloc[i]['Họ và tên']}")
+    try:
+        pdf = tao_pdf_nhan_vien(df.iloc[chon_nv])
+        st.download_button("📄 TẢI PHIẾU LƯƠNG PDF CỦA NHÂN VIÊN ĐÃ CHỌN",
+                           data=pdf, file_name=f"phieu_luong_{chon_nv+1:03d}_{ten_file_an_toan(df.iloc[chon_nv]['Họ và tên'])}.pdf",
+                           mime="application/pdf", use_container_width=True)
+        if st.button("📦 TẠO FILE ZIP CHỨA PDF CỦA TẤT CẢ NHÂN VIÊN", use_container_width=True):
+            with st.spinner("Đang tạo các phiếu lương PDF..."):
+                st.session_state.zip_phieu_luong = tao_zip_phieu_luong(df)
+        if "zip_phieu_luong" in st.session_state:
+            st.download_button("⬇️ TẢI FILE ZIP PHIẾU LƯƠNG", data=st.session_state.zip_phieu_luong,
+                               file_name="phieu_luong_tat_ca_nhan_vien.zip", mime="application/zip",
+                               use_container_width=True)
+    except (FileNotFoundError, ImportError) as exc:
+        st.error(f"Chưa thể tạo PDF: {exc}")
     st.caption("Sau khi sửa dữ liệu nhập, nhấn TÍNH LƯƠNG lại để cập nhật kết quả và file xuất.")
 
 with st.expander("📘 Công thức đang sử dụng"):
@@ -212,4 +337,4 @@ with st.expander("📘 Công thức đang sử dụng"):
     - **Thu nhập tính thuế:** MAX(0; Tổng thu nhập − 15,5 − 6,2 × Số người phụ thuộc − Bảo hiểm).
     - **Thuế TNCN:** Tính theo biểu thuế lũy tiến được giữ từ chương trình gốc.
     - **Tiền thực lãnh:** Tổng thu nhập − Bảo hiểm − Thuế TNCN.
-    """)
+      """)
